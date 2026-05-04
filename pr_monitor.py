@@ -156,15 +156,28 @@ Generiert automatisch – {datetime.now().strftime('%H:%M Uhr')}
 """
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
+    assert EMAIL_SENDER and EMAIL_PASSWORD
     server = smtplib.SMTP("smtp.gmail.com", 587)
-    server.starttls()
-    server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-    server.send_message(msg)
-    server.quit()
+    try:
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.send_message(msg)
+    finally:
+        server.quit()
     print("E-Mail erfolgreich gesendet.")
 
 
 def main():
+    required = {
+        "OPENAI_API_KEY": OPENAI_API_KEY,
+        "EMAIL_SENDER":   EMAIL_SENDER,
+        "EMAIL_PASSWORD": EMAIL_PASSWORD,
+        "EMAIL_RECEIVER": EMAIL_RECEIVER,
+    }
+    missing = [k for k, v in required.items() if not v]
+    if missing:
+        raise EnvironmentError(f"Fehlende Secrets/Umgebungsvariablen: {', '.join(missing)}")
+
     print(f"PR Monitoring gestartet – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     print("Suche nach Erwähnungen...")
