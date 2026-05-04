@@ -2,7 +2,7 @@ name: Daily PR Monitor
 
 on:
   schedule:
-    - cron: '0 5 * * *'   # 6:00 Uhr (Winterzeit) / 7:00 Uhr (Sommerzeit)
+   - cron: '0 5 * * 1-5'   # 6:00 Uhr (Winterzeit) / 7:00 Uhr (Sommerzeit)
   workflow_dispatch:        # manueller Start jederzeit möglich
 
 jobs:
