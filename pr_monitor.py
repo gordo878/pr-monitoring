@@ -3,13 +3,13 @@ import json
 import feedparser
 import requests
 from datetime import datetime, timedelta
-from openai import OpenAI
+import anthropic
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # Konfiguration
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 NEWS_API_KEY   = os.environ.get("NEWS_API_KEY")
 EMAIL_SENDER   = os.environ.get("EMAIL_SENDER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
@@ -93,12 +93,16 @@ def collect_all_mentions() -> dict:
 
 
 def create_briefing(mentions: dict) -> str:
-    """Erstellt das strukturierte Briefing auf Deutsch via OpenAI."""
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     data_text = json.dumps(mentions, indent=2, ensure_ascii=False)
 
-    prompt = f"""Du bist PR- und Kommunikationsberater. Erstelle ein tägliches Monitoring-Briefing auf Deutsch.
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1500,
+        system="Du bist ein präziser PR-Analyst.",
+        messages=[
+            {"role": "user", "content": f"""Du bist PR- und Kommunikationsberater. Erstelle ein tägliches Monitoring-Briefing auf Deutsch.
 
 Analysiere folgende Medienfunde der letzten 24 Stunden und schreibe das Briefing exakt in diesem Format:
 
@@ -113,27 +117,14 @@ Analysiere folgende Medienfunde der letzten 24 Stunden und schreibe das Briefing
 [2–3 Sätze: PR-Relevanz einschätzen, Handlungsbedarf ja oder nein, kurze Begründung]
 ---
 
-Fokus bei den Befunden auf:
-- M&A, Investitionen, Projektankündigungen
-- Regulatorische Entscheidungen / Genehmigungen
-- Personalveränderungen
-- Kritische Berichterstattung / Reputationsrisiken
-- Erwähnungen im Kontext Energiepolitik oder Infrastruktur
-
-Stil: sachlich, prägnant, keine Füllwörter. Bullet Points mit konkreten Aussagen inkl. Quellenname in Klammern.
+Fokus auf: M&A, Investitionen, Projektankündigungen, Regulatorik, Personalveränderungen, Reputationsrisiken, Energiepolitik.
+Stil: sachlich, prägnant, Bullet Points mit Quellenname in Klammern.
 
 Mediendaten:
-{data_text}"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Du bist ein präziser PR-Analyst."},
-            {"role": "user",   "content": prompt},
-        ],
-        max_tokens=1500,
+{data_text}"""}
+        ]
     )
-    return response.choices[0].message.content
+    return message.content[0].text
 
 
 def send_email(briefing: str):
@@ -169,7 +160,7 @@ Generiert automatisch – {datetime.now().strftime('%H:%M Uhr')}
 
 def main():
     required = {
-        "OPENAI_API_KEY": OPENAI_API_KEY,
+        "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
         "EMAIL_SENDER":   EMAIL_SENDER,
         "EMAIL_PASSWORD": EMAIL_PASSWORD,
         "EMAIL_RECEIVER": EMAIL_RECEIVER,
