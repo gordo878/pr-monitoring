@@ -10,10 +10,10 @@ from email.mime.multipart import MIMEMultipart
 
 # Konfiguration
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-NEWS_API_KEY   = os.environ.get("NEWS_API_KEY")
-EMAIL_SENDER   = os.environ.get("EMAIL_SENDER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER")
+NEWS_API_KEY      = os.environ.get("NEWS_API_KEY")
+EMAIL_SENDER      = os.environ.get("EMAIL_SENDER")
+EMAIL_PASSWORD    = os.environ.get("EMAIL_PASSWORD")
+EMAIL_RECEIVER    = os.environ.get("EMAIL_RECEIVER")
 
 TARGETS = {
     "Blue Elephant Energy": [
@@ -25,6 +25,19 @@ TARGETS = {
         '"Antin Infrastructure" infrastructure OR energy OR investment OR acquisition',
     ],
 }
+
+TRADE_FEEDS = {
+    "Renews.biz":          "https://renews.biz/feed/",
+    "Recharge News":       "https://www.rechargenews.com/rss",
+    "PV Magazine":         "https://www.pv-magazine.com/feed/",
+    "Windpower Monthly":   "https://www.windpowermonthly.com/rss",
+    "Energy Storage News": "https://www.energy-storage.news/feed/",
+}
+
+SEARCH_TERMS = [
+    "blue elephant energy",
+    "antin infrastructure",
+]
 
 
 def fetch_google_news(query: str) -> list[dict]:
@@ -76,25 +89,76 @@ def fetch_newsapi(query: str) -> list[dict]:
     return []
 
 
+def fetch_trade_media() -> list[dict]:
+    """Durchsucht Fachmedien-RSS nach Erwähnungen der Zielunternehmen."""
+    results = []
+    yesterday = datetime.now() - timedelta(days=1)
+
+    for source, url in TRADE_FEEDS.items():
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:30]:
+                title   = entry.get("title", "").lower()
+                summary = entry.get("summary", "").lower()
+
+                if any(term in title or term in summary for term in SEARCH_TERMS):
+                    pub_date = None
+                    if hasattr(entry, "published_parsed") and entry.published_parsed:
+                        pub_date = datetime(*entry.published_parsed[:6])
+                        if pub_date < yesterday:
+                            continue
+
+                    company = (
+                        "Blue Elephant Energy"
+                        if "blue elephant" in title + summary
+                        else "Antin Infrastructure Partners"
+                    )
+
+                    results.append({
+                        "title":       entry.get("title", ""),
+                        "description": entry.get("summary", "")[:400],
+                        "url":         entry.get("link", ""),
+                        "source":      source,
+                        "company":     company,
+                    })
+                    print(f"  Treffer in {source}: {entry.get('title', '')[:60]}")
+        except Exception as e:
+            print(f"Fehler bei {source}: {e}")
+
+    return results
+
+
 def collect_all_mentions() -> dict:
     """Sammelt alle Erwähnungen für beide Zielunternehmen."""
-    results = {}
+    results  = {"Blue Elephant Energy": [], "Antin Infrastructure Partners": []}
+    seen_urls = set()
+
+    # Google News + NewsAPI
     for company, queries in TARGETS.items():
-        articles = []
-        seen_urls = set()
         for q in queries:
             for article in fetch_google_news(q) + fetch_newsapi(q):
                 if article["url"] not in seen_urls and article["title"]:
                     seen_urls.add(article["url"])
-                    articles.append(article)
-        results[company] = articles[:10]  # max. 10 pro Unternehmen
-        print(f"{company}: {len(results[company])} Artikel gefunden")
+                    results[company].append(article)
+
+    # Fachmedien RSS
+    print("Durchsuche Fachmedien...")
+    for article in fetch_trade_media():
+        company = article["company"]
+        if article["url"] not in seen_urls:
+            seen_urls.add(article["url"])
+            results[company].append(article)
+
+    for company, articles in results.items():
+        results[company] = articles[:12]
+        print(f"{company}: {len(results[company])} Artikel gesamt")
+
     return results
 
 
 def create_briefing(mentions: dict) -> str:
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
+    """Erstellt das strukturierte Briefing auf Deutsch via Claude."""
+    client    = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     data_text = json.dumps(mentions, indent=2, ensure_ascii=False)
 
     message = client.messages.create(
@@ -131,7 +195,7 @@ def send_email(briefing: str):
     """Versendet das Briefing per E-Mail."""
     today = datetime.now().strftime("%d.%m.%Y")
 
-    msg = MIMEMultipart()
+    msg            = MIMEMultipart()
     msg["From"]    = EMAIL_SENDER
     msg["To"]      = EMAIL_RECEIVER
     msg["Subject"] = f"PR Monitoring – Blue Elephant Energy & Antin – {today}"
@@ -142,33 +206,20 @@ def send_email(briefing: str):
 {briefing}
 
 {'='*50}
-Quellen: Google News, NewsAPI
+Quellen: Google News, NewsAPI, Renews.biz, Recharge News, PV Magazine, Windpower Monthly, Energy Storage News
 Generiert automatisch – {datetime.now().strftime('%H:%M Uhr')}
 """
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    assert EMAIL_SENDER and EMAIL_PASSWORD
     server = smtplib.SMTP("smtp.gmail.com", 587)
-    try:
-        server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.send_message(msg)
-    finally:
-        server.quit()
+    server.starttls()
+    server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+    server.send_message(msg)
+    server.quit()
     print("E-Mail erfolgreich gesendet.")
 
 
 def main():
-    required = {
-        "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
-        "EMAIL_SENDER":   EMAIL_SENDER,
-        "EMAIL_PASSWORD": EMAIL_PASSWORD,
-        "EMAIL_RECEIVER": EMAIL_RECEIVER,
-    }
-    missing = [k for k, v in required.items() if not v]
-    if missing:
-        raise EnvironmentError(f"Fehlende Secrets/Umgebungsvariablen: {', '.join(missing)}")
-
     print(f"PR Monitoring gestartet – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     print("Suche nach Erwähnungen...")
