@@ -2,7 +2,7 @@ import os
 import json
 import feedparser
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import anthropic
 import smtplib
 from email.mime.text import MIMEText
@@ -92,7 +92,7 @@ def fetch_newsapi(query: str) -> list[dict]:
 def fetch_trade_media() -> list[dict]:
     """Durchsucht Fachmedien-RSS nach Erwähnungen der Zielunternehmen."""
     results = []
-    yesterday = datetime.now() - timedelta(days=1)
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
 
     for source, url in TRADE_FEEDS.items():
         try:
@@ -102,17 +102,20 @@ def fetch_trade_media() -> list[dict]:
                 summary = entry.get("summary", "").lower()
 
                 if any(term in title or term in summary for term in SEARCH_TERMS):
-                    pub_date = None
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
-                        pub_date = datetime(*entry.published_parsed[:6])
+                        pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
                         if pub_date < yesterday:
                             continue
+                    else:
+                        continue
 
-                    company = (
-                        "Blue Elephant Energy"
-                        if "blue elephant" in title + summary
-                        else "Antin Infrastructure Partners"
-                    )
+                    combined = title + summary
+                    if "blue elephant" in combined:
+                        company = "Blue Elephant Energy"
+                    elif "antin" in combined:
+                        company = "Antin Infrastructure Partners"
+                    else:
+                        continue
 
                     results.append({
                         "title":       entry.get("title", ""),
@@ -211,15 +214,20 @@ Generiert automatisch – {datetime.now().strftime('%H:%M Uhr')}
 """
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    server = smtplib.SMTP("smtp.gmail.com", 587)
-    server.starttls()
-    server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-    server.send_message(msg)
-    server.quit()
+    assert EMAIL_SENDER is not None
+    assert EMAIL_PASSWORD is not None
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.send_message(msg)
     print("E-Mail erfolgreich gesendet.")
 
 
 def main():
+    missing = [v for v in ["ANTHROPIC_API_KEY", "EMAIL_SENDER", "EMAIL_PASSWORD", "EMAIL_RECEIVER"] if not os.environ.get(v)]
+    if missing:
+        raise SystemExit(f"Fehlende Umgebungsvariablen: {', '.join(missing)}")
+
     print(f"PR Monitoring gestartet – {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     print("Suche nach Erwähnungen...")
